@@ -3,57 +3,57 @@
     Run-Hedz.ps1 - the canonical way to launch H.E.D.Z. on Windows 11.
 
 .DESCRIPTION
-    Launch sequence that works on this machine:
+    FINAL architecture (DDrawCompat era, supersedes the DxWnd launcher):
 
-      1. (default) retire pal-ddraw - DxWnd is the single authoritative
-         DirectDraw layer, and pal-ddraw provably does nothing for this title
-         (verified: standing it down, and sweeping its config, both change
-         nothing). Running both violates the one-wrapper rule.
-      2. start the DxWnd server in the tray (quiet)
-      3. hand it the official H.E.D.Z. profile with /Y:<file>
-      4. optionally wait for the game to exit, then shut DxWnd down
+      game folder ddraw.dll  =  DDrawCompat v0.7.1 (DirectDraw/D3D1-7 -> D3D11,
+                                GPU rendering with correct ARGB4444 alpha
+                                sprites - the loadout/HUD fix)
+      mss32 proxy            =  music fix (streams .mus from the CD)
+      DxWnd / pal-ddraw      =  retired; nothing else hooks the game
 
-    The official profile is what fixed the blocker: it forces the render window
-    to 800x600 instead of the full desktop (1920x1080), which is the size the
-    game could not allocate surfaces for - its own string says it all:
-      "To run this program in a window of this size, please adjust your display
-       settings for a smaller desktop area or a lower palette size..."
+    Launch sequence:
+      1. verify (or deploy) DDrawCompat ddraw.dll by SHA256
+      2. check the CD is mounted and the .mus tracks are reachable
+      3. start Hedz.exe directly - DDrawCompat emulates the display-mode
+         path itself, so no window manager is needed
 
-.PARAMETER KeepPalDdraw
-    Leave the game folder's pal-ddraw DDRAW.dll in place (not recommended).
+    The game opens a 640x480 window (fullscreen emulated by DDrawCompat).
+    Measure/verify rendering with tools\Test-DDrawCompat.ps1 -MeasureOnly
+    or tools\Get-HedzStatus.ps1.
 
 .PARAMETER Wait
-    Block until Hedz.exe exits, then stop DxWnd.
+    Block until Hedz.exe exits.
 
-.PARAMETER RestorePalDdraw
-    Put pal-ddraw back after the session, for a clean return to the original
-    state. Implies the game folder's ddraw.ini is left untouched.
+.PARAMETER SkipDeploy
+    Do not touch ddraw.dll; just verify it and launch.
 #>
 [CmdletBinding()]
 param(
     [string]$GameExe = 'C:\GAMES\HEDZ\Hedz.exe',
-    [switch]$KeepPalDdraw,
     [switch]$Wait,
-    [switch]$RestorePalDdraw
+    [switch]$SkipDeploy
 )
 $ErrorActionPreference='Stop'
 
-$kit   = $PSScriptRoot
-$rt    = Join-Path $kit 'dxwnd\runtime'
-$exe   = Join-Path $rt 'dxwnd.exe'
-$prof  = Join-Path $kit 'dxwnd\HEDZ.dxw'
+$kit     = $PSScriptRoot
 $gameDir = Split-Path $GameExe -Parent
-$pdd   = Join-Path $gameDir 'DDRAW.dll'
-$pddOff= Join-Path $gameDir 'DDRAW.dll.pal-ddraw-disabled'
+$dd      = Join-Path $gameDir 'ddraw.dll'
 
 function Say([string]$s){ Write-Host $s }
 
 # ---------- preflight ----------
-if(-not (Test-Path $exe)) { throw "DxWnd is not deployed. Run: powershell -File tools\Install-DxWnd.ps1" }
-if(-not (Test-Path $prof)){ throw "Profile missing. Run: powershell -File tools\Install-DxWnd.ps1" }
 if(-not (Test-Path $GameExe)){ throw "Game not found: $GameExe" }
 
-# the disc must be reachable or the game will demand it
+Say '=== DirectDraw layer (DDrawCompat) ==='
+if(-not $SkipDeploy){
+    & (Join-Path $kit 'Install-DDrawCompat.ps1') -GameDir $gameDir
+} else {
+    & (Join-Path $kit 'Install-DDrawCompat.ps1') -GameDir $gameDir -Check
+}
+
+# ---------- CD / music check ----------
+Say ''
+Say '=== CD check ==='
 $cd = $null
 $k='HKLM:\SOFTWARE\WOW6432Node\Vis Interactive\Hedz'
 if(Test-Path $k){ $cd=(Get-ItemProperty $k -Name InstalledFromDrive -ErrorAction SilentlyContinue).InstalledFromDrive }
@@ -63,43 +63,25 @@ if($cd){
         $n=@(Get-ChildItem ($cd + '\Hedz\Music') -Filter '*.mus' -ErrorAction SilentlyContinue).Count
         Say ("disc OK: {0}\Hedz\Music has {1} .mus tracks" -f $cd,$n)
     } else {
-        Say ("WARNING: {0}\Hedz\Music is not reachable - mount the CD image on {0} first" -f $cd)
+        Say ("WARNING: {0}\Hedz\Music is not reachable - mount the CD image on {0} first (music will be silent)" -f $cd)
     }
 } else { Say 'WARNING: InstalledFromDrive not set - run tools\Set-HedzCdPath.ps1 -CdDrive D: (elevated)' }
 
-# ---------- one-wrapper rule ----------
-$restore=$false
-if(-not $KeepPalDdraw -and (Test-Path $pdd)){
-    if(Test-Path $pddOff){ Remove-Item $pddOff -Force }
-    Move-Item $pdd $pddOff -Force
-    $restore=$true
-    Say 'pal-ddraw retired for this session (DxWnd is the authoritative DirectDraw layer)'
-}
-
 # ---------- launch ----------
-Say 'starting the DxWnd server...'
-Get-Process -Name dxwnd -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill(); }
-Start-Sleep -Milliseconds 700
-$server = Start-Process -FilePath $exe -ArgumentList '/T','/Q' -WorkingDirectory $rt -PassThru
-Start-Sleep -Seconds 3
-Say ("  server pid {0}" -f $server.Id)
+Say ''
+Say '=== launching Hedz.exe (DDrawCompat active) ==='
+$old = Get-Process -Name Hedz -ErrorAction SilentlyContinue
+if($old){ Say ("stale Hedz.exe pid {0} found - stopping it first" -f $old.Id); $old | ForEach-Object { $_.Kill() }; Start-Sleep -Milliseconds 700 }
 
-Say ("running profile {0} ..." -f (Split-Path $prof -Leaf))
-$client = Start-Process -FilePath $exe -ArgumentList ('/Y:"' + $prof + '"') -WorkingDirectory $rt -PassThru
-$client.WaitForExit(20000) | Out-Null
-Say '  game launched - look for an 800x600 window'
+$p = Start-Process -FilePath $GameExe -WorkingDirectory $gameDir -PassThru
+Say ("  pid {0} - the game opens a 640x480 window (fullscreen emulated by DDrawCompat)" -f $p.Id)
 
 if($Wait){
-    Say 'waiting for Hedz.exe to exit...'
-    while(Get-Process -Name Hedz -ErrorAction SilentlyContinue){ Start-Sleep -Seconds 2 }
-    Say 'game exited - stopping DxWnd'
-    Get-Process -Name dxwnd -ErrorAction SilentlyContinue | ForEach-Object { $_.Kill() }
-    if($restore -or $RestorePalDdraw){
-        if(Test-Path $pddOff){ Move-Item $pddOff $pdd -Force; Say 'pal-ddraw restored' }
-    }
+    Say 'waiting for the game to exit...'
+    while(-not $p.HasExited){ Start-Sleep -Seconds 2 }
+    Say 'game exited.'
 } else {
     Say ''
-    Say 'DxWnd stays in the system tray while you play.'
-    Say 'To stop DxWnd afterwards:'
-    Say ('    "{0}" /E' -f $exe)
+    Say 'To check rendering status later:'
+    Say '    powershell -File tools\Get-HedzStatus.ps1'
 }

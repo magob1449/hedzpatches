@@ -1,18 +1,15 @@
 @echo off
 rem ====================================================================
-rem  H.E.D.Z. launcher - runs the game through DxWnd with the OFFICIAL
-rem  H.E.D.Z. profile, which forces the render window to 800x600.
+rem  H.E.D.Z. launcher - FINAL architecture: the game runs with
+rem  DDrawCompat (ddraw.dll in the game folder) and nothing else.
 rem
-rem  Without this the game opens a black window the size of the whole
-rem  desktop (1920x1080) on top of its own menu, which makes the menu
-rem  unclickable and looks like a crash.
-rem
-rem  It also retires pal-ddraw for the session so DxWnd is the single
-rem  authoritative DirectDraw layer.
+rem  DDrawCompat renders DirectDraw/Direct3D 1-7 through D3D11 on the
+rem  GPU - this is what fixes the white in-level loadout icons AND
+rem  gives hardware-quality rendering. The mss32 proxy next to it
+rem  streams the .mus music from the CD.
 rem
 rem  Any arguments are passed through, e.g.:
-rem      Run-Hedz.cmd -Wait            wait for the game, then stop DxWnd
-rem      Run-Hedz.cmd -KeepPalDdraw    leave pal-ddraw in place
+rem      Run-Hedz.cmd -Wait     block until the game exits
 rem ====================================================================
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0Run-Hedz.ps1" %*
 if errorlevel 1 pause

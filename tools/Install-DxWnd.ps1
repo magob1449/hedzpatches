@@ -75,6 +75,16 @@ Write-Host ("  source profile: {0}" -f $srcProfile)
 $origPath = ([regex]::Match($text,'(?m)^path0=(.*)$')).Groups[1].Value.Trim()
 Write-Host ("  original path0 : {0}" -f $origPath)
 $text = [regex]::Replace($text,'(?m)^path0=.*$', ('path0=' + $GameExe))
+# FORCESHEL (dwFlags3 0x02000000): the stock profile's flagh0=22 lacks it. Without
+# it the in-level loadout HUD (R4G4B4A4 alpha sprites) renders as white ovals on
+# the modern HAL path - measured 24.5% white in the HUD region vs 0.6% with the
+# flag (tools\Test-LoadoutAB.ps1). Software D3D is trivial for a modern CPU.
+$text = [regex]::Replace($text,'(?m)^flagh0=22$', 'flagh0=33554454')
+# BILINEARFILTER (dwFlags5 0x00000400): FORCESHEL renders at the game's internal
+# low resolution, which looks very pixelated when stretched to 800x600. This
+# enables bilinear stretch filtering - measured flat-pair pixelation 77.8% ->
+# 22.4% (lower = smoother) with the loadout fix retained.
+$text = [regex]::Replace($text,'(?m)^flagj0=134221952$', 'flagj0=134222976')
 if(-not (Test-Path $GameExe)){ Write-Host ("  WARNING: {0} does not exist on this machine" -f $GameExe) }
 
 $destProfile = Join-Path $kit 'dxwnd\HEDZ.dxw'

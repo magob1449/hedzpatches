@@ -10,6 +10,29 @@
 
 ## ⚠ Current status (read this first — it supersedes the task text below where they disagree)
 
+**FINAL architecture — DDrawCompat era (current)**
+
+- **The white in-level loadout (heads/icons) is FIXED — with hardware rendering.**
+  The loadout HUD draws its head icons as **128x128 ARGB4444 alpha-blended sprites**;
+  texture dumps proved the art reaches memory intact (~48% opaque / ~52% transparent)
+  but DxWnd's HAL path rendered the quads white (measured **24.5%** HUD white).
+  DxWnd's own author root-caused "some surfaces were not fully unlocked when used" in
+  his 2024 H.E.D.Z. thread but never shipped a complete fix (the thread ends
+  mid-investigation). **DDrawCompat v0.7.1** (`ddraw.dll` in the game folder) renders
+  DirectDraw/Direct3D 1-7 through its own D3D11 pipeline on the GPU, with native
+  ARGB4444 alpha support: measured **0% HUD white, 2962 distinct colours,
+  flat-pair 56.8%** (baseline-level crispness — hardware quality, no pixelation).
+- **DxWnd, pal-ddraw and dgVoodoo2 are all retired.** The single authoritative
+  DirectDraw layer is now **DDrawCompat alone**: `Install-DDrawCompat.ps1` deploys
+  and SHA256-verifies `ddraw.dll`, retires leftover wrapper files, and the canonical
+  launcher (`Run-Hedz.ps1` / `Run-Hedz.cmd`) starts `Hedz.exe` directly — no window
+  manager needed, because DDrawCompat emulates the display-mode path itself
+  (this also fixed the old "direct launch dies in 8 s" failure).
+  `Get-HedzStatus.ps1` verifies the layer, the mss32 music proxy and the CD at any
+  time. Full diagnosis and A/B tables: `TROUBLESHOOTING.md` §5.
+- The game window is 640x480 (fullscreen emulated and upscaled by DDrawCompat).
+- No game binary has been patched at any point in this project.
+
 **Working**
 
 - **Task 0** — the CD's `SETUP.EXE` is confirmed to be a 16-bit NE executable and is
@@ -43,16 +66,19 @@
 - Its own string names the cause outright:
   `To run this program in a window of this size, please adjust your display settings
   for a smaller desktop area or a lower palette size and restart the program.`
-- **Fix: run it under DxWnd with the OFFICIAL H.E.D.Z. profile** —
+- **Fix (historical): run it under DxWnd with the OFFICIAL H.E.D.Z. profile** —
   `Install-DxWnd.ps1` then `Run-Hedz.ps1` (or double-click `tools\Run-Hedz.cmd`).
   DxWnd 2.06.15 ships two ready-made H.E.D.Z. profiles; the maintained one forces the
   render window to **800x600**, after which the menu is visible and playable.
   Measured after the change: 800x600 at 50,50 instead of 1920x1080, and no 9-second
   bail-out.
+  **[Superseded — the current architecture is DDrawCompat alone; see FINAL architecture
+  above. DDrawCompat emulates the display-mode path, so direct launches work.]**
 - **pal-ddraw is retired.** It emulates *palettes* (8-bit) while this title's failure
   strings are all about **16-bit** surfaces; standing it down and sweeping its config
   both change nothing (`TROUBLESHOOTING.md` §3). Running it alongside DxWnd would also
-  break the one-wrapper rule. **DxWnd is now the single authoritative DirectDraw layer.**
+  break the one-wrapper rule. **Exactly one authoritative DirectDraw layer — first
+  DxWnd, now DDrawCompat (see FINAL architecture above).**
 - **Stacking the two layers is fatal, not merely untidy.** pal-ddraw + DxWnd together
   produce `0xC0000005` ACCESS_VIOLATION with faulting module **`ddraw.dll`** (WER
   Application Error). With pal-ddraw retired: no crash, 45 distinct colours on screen,
@@ -79,15 +105,14 @@ No game binary has been patched at any point in this project.
 1. `Verify-SetupExe.ps1` → proves the 16-bit diagnosis.
 2. Install with `Install-Hedz.ps1` (or otvdm on the real installer) → `C:\GAMES\HEDZ`.
 3. `Apply-HedzCompat.ps1 -Action Apply` (elevated) → Win11 24H2 mitigations + low-res mode.
-4. `powershell -File tools\Install-DxWnd.ps1` → deploys the DxWnd runtime into
-   `tools\dxwnd\runtime` and installs the **official** H.E.D.Z. profile, rewriting
-   only its executable path to your install.
+4. `powershell -File tools\Install-DDrawCompat.ps1` → deploys **DDrawCompat v0.7.1**
+   as `ddraw.dll` in the game folder (SHA256-verified) and retires leftover wrapper
+   files. **This is the DirectDraw layer: GPU rendering via D3D11, correct ARGB4444
+   alpha sprites (the loadout/HUD fix), display-mode emulation.**
 5. `powershell -File tools\Run-Hedz.ps1` (or double-click `tools\Run-Hedz.cmd`)
-   → retires pal-ddraw, starts DxWnd, and runs the profile. **This is the step that
-   makes the game playable** — it forces the 800x600 window the game can actually
-   render into.
+   → re-verifies the layer, checks the CD, and launches `Hedz.exe` directly.
 6. Keep the HEDZ disc image mounted (WinCDEmu) on the drive letter stored in the `InstalledFromDrive` registry value.
-7. Launch Hedz.exe → music streams from D:, palette rendering is emulated, no crashes.
+7. Launch Hedz.exe → music streams from D:, the loadout renders correctly, no crashes.
 
 If a crash persists, run `Get-HedzCrashLog.ps1` and match it against the
 [crash taxonomy](#task-1--crash-diagnosis--fixes).
@@ -434,9 +459,13 @@ SetDisplayMode calls behave as on Win9x.
 | `tools\hedz-install.reg` | Corrected registry reference (explicit `WOW6432Node` paths, real installer value names) |
 | `tools\Apply-HedzCompat.ps1` | Win11 24H2 mitigations (POLY14, Restore16BitDisplayMode, low-color toggle, 640×480 mode); `-Action Revert` undoes all |
 | `tools\Get-HedzCrashLog.ps1` | Event Viewer / WER triage after a crash |
-| `tools\dxwnd\HEDZ.dxw` | **The fix.** The OFFICIAL DxWnd H.E.D.Z. profile taken unmodified from DxWnd's own `exports\` (stamped v2.04.72.a0), with only `path0` rewritten to the local install. It forces the 800x600 render window. DxWnd is the authoritative DirectDraw layer — do not add a second |
+| `tools\Install-DDrawCompat.ps1` | **The DirectDraw layer (final architecture).** Deploys DDrawCompat v0.7.1 as `ddraw.dll` into the game folder, SHA256-verifies it, and retires leftover wrapper files (dgVoodoo, pal-ddraw, DxWnd-era ini) |
+| `tools\Run-Hedz.ps1` / `Run-Hedz.cmd` | **Canonical launcher.** Re-verifies DDrawCompat, checks the CD/`.mus`, and launches `Hedz.exe` directly (no DxWnd) |
+| `tools\Get-HedzStatus.ps1` | Read-only one-screen state check: DDrawCompat hash, leftover-wrapper audit, mss32 music proxy, registry CD path, disc/music reachability |
+| `tools\Test-DDrawCompat.ps1` | A/B evidence harness: deploys DDC, launches (direct or under DxWnd), waits for level entry via the mss32 proxy `.AMB` marker, captures the real window rect and measures HUD-white% + flat-pair pixelation% |
+| `tools\dxwnd\HEDZ.dxw` | (Historical) the OFFICIAL DxWnd H.E.D.Z. profile from DxWnd's `exports\`, plus the FORCESHEL/BILINEARFILTER experiments — kept for the record; DxWnd is retired from the launch path |
 | `tools\Install-DxWnd.ps1` | Deploys the DxWnd runtime into `tools\dxwnd\runtime` and installs the official profile |
-| `tools\Run-Hedz.ps1` / `Run-Hedz.cmd` | **Canonical launcher.** Retires pal-ddraw, starts the DxWnd server in the tray, runs the profile via `/Y:<file>` |
+| `tools\Run-Hedz.ps1` / `Run-Hedz.cmd` | (Historical DxWnd-era description) retired pal-ddraw, started the DxWnd server in the tray, ran the profile via `/Y:<file>` — superseded by the DDrawCompat launcher above |
 | `tools\Get-HedzStatus.ps1` | Read-only one-screen state check: DirectDraw layer, DxWnd deployment, registry CD path, disc/music reachability |
 | `tools\Test-DxWnd.ps1` | Runs the game under DxWnd and reports window size, blackness and lifetime (restores pal-ddraw afterwards) |
 | `tools\Capture-OnWindow.ps1` | Screenshots the render window the instant it appears — this is what proved the window was a single colour of pure black |
@@ -455,8 +484,9 @@ SetDisplayMode calls behave as on Win9x.
 External tools you still download yourself (legit sources only):
 
 - **pal-ddraw** — github.com/nemesis0/pal-ddraw (or per README.md current link)
-- **DDrawCompat** — github.com/CnCNet/ddrawcompat (CnCNet maintained)
-- **dgVoodoo2** — dege.freeweb.hu (official site)
+- **DDrawCompat** — github.com/narzoul/DDrawCompat — **v0.7.1 downloaded and kept at
+  `tools\ddrawcompat\dist\ddraw.dll`** (the deployed DirectDraw layer)
+- **dgVoodoo2** — dege.freeweb.hu (tested, crashes at D3D device creation on this title — retired)
 - **DxWnd** — sourceforge.net/projects/dxwnd — downloaded and deployed by
   `Install-DxWnd.ps1` (v2.06.15, from that official SourceForge project).
   Extract the archive to `tools\dxwnd\dist\` yourself — the distribution is
@@ -482,14 +512,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Install-Hedz.ps1 -Cd
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Apply-HedzCompat.ps1 -Action Apply
 #    (reboot or sign out/in once for the 640x480 mode to settle)
 
-# 4. DirectDraw layer: DxWnd + the OFFICIAL H.E.D.Z. profile
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Install-DxWnd.ps1
+# 4. DirectDraw layer: DDrawCompat (GPU rendering, HUD fix, display-mode emulation)
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Install-DDrawCompat.ps1
 
 # 5. mount disc image (WinCDEmu tray icon → HEDZ.cue/.iso → drive letter D:)
 #    (must match InstalledFromDrive in the registry - which is written as "D:",
 #     colon included; re-run Set-HedzCdPath.ps1 if you mount on another letter)
 
-# 6. launch - THIS is what makes the menu visible and clickable
+# 6. launch - verifies the layer + CD, then starts the game directly
 powershell -NoProfile -ExecutionPolicy Bypass -File .\tools\Run-Hedz.ps1
 #    ...or just double-click tools\Run-Hedz.cmd
 #    Verify state at any time with:  .\tools\Get-HedzStatus.ps1

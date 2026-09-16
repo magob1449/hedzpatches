@@ -272,12 +272,99 @@ SHIM  mmioOpenA("D:\Hedz\Music\1.MUS", flags=0x10) -> MMIO_DENYNONE (flags=0x40)
 
 ---
 
+## 5. White in-level loadout (heads/icons) — ROOT-CAUSED AND FIXED
+
+### 5.1 Symptom
+
+The front-end head-select screen renders fine; inside a level, the loadout
+panel (bottom-right) shows **white ovals where the head icons belong**. World
+textures are unaffected. The same white-panel class is reported by the DxWnd
+community thread for Nvidia GPUs (gho could never reproduce it on Intel).
+
+### 5.2 Forensic chain (every step measured, not guessed)
+
+1. **`Hedz.exe` imports only DDRAW.dll + DINPUT.dll, but strings reveal a D3D
+   front end** (`d3dappi.FEMode`, "Ramp" device, `hdz_FE_headcase.h` cluster:
+   "Failed to obtain D3D surface for head case", `vox_head_*`).
+2. **Texture dump (DxWnd TEXTUREDUMP) in-level:** 71 textures of
+   **128x128 R4G4B4A4** (DDPF_ALPHAPIXELS, RGBA masks 0xF00/0xF0/0xF/0xF000)
+   with **real content** (avg 91% non-zero pixels, ~48% opaque / ~52%
+   transparent alpha — HUD icon sprites). The front-end textures are all
+   R5G6B5 and those render fine. The art reaches memory intact; the failure
+   is at render time.
+3. **Flag A/B on DxWnd (automated, `Test-LoadoutAB.ps1`):**
+
+   | Variant | HUD white % | Meaning |
+   |---|---|---|
+   | base (official profile, HAL) | 24.5 | broken baseline |
+   | alphaon (drop NOALPHACHANNEL) | 24.5 | alpha capability is not the gate |
+   | no565 (drop USERGB565) | all black | 565 forcing is load-bearing |
+   | **FORCESHEL** (software D3D) | **0.6** | software path tolerates the bug |
+   | FORCESHEL + BILINEARFILTER | **0.5** | + smooth scaling (flat-pairs 77.8% → 22.4%) |
+
+   FORCESHEL proved the diagnosis but renders at the game's internal low
+   resolution — software-quality, pixelated. Not acceptable as the final state.
+4. **dgVoodoo2 v2.87 (hardware candidate):** front end works, but the game
+   **crashes with 0xC0000005 inside dgVoodoo's own `D3DImm.dll`** (v4.7.1.3000,
+   offset 0x4b618) exactly at level-load D3D device creation. Independently
+   reproduced by nathnolt in the DxWnd thread. Dead end, retired.
+5. **DxWnd SURFACEUNLOCK hunt:** gho's thread root-causes "surfaces not fully
+   unlocked when used" and adds a "Force surface unlock" flag, but its bit is
+   absent from the open-source header (the 2026 binary's decode tables also
+   diverge from source). A systematic probe of every `.dxw` flag group
+   (all-ones per group, reading the binary's own init banner) found **no
+   group that names SURFACEUNLOCK** (flagl0 0x20000 = HOOKNORUN, which merely
+   suppresses the launch — the one "no log" red herring). No shipped DxWnd
+   fix exists; the thread's last post (2024-08-15) is gho inspecting *our
+   exact* 128x128 ARGB4444 surfaces, mid-investigation.
+6. **The decisive clue came from `huh` (same thread, 2024-08-14):** with
+   **DDrawCompat**, allowing the **A4R4G4B4** texture format is the one
+   configuration where the white panel renders correctly — every other format
+   subset breaks it. DDrawCompat implements DirectDraw/D3D1-7 on its own D3D11
+   pipeline with correct 4444 alpha support.
+
+### 5.3 The fix — DDrawCompat v0.7.1, alone (`Test-DDrawCompat.ps1`)
+
+| Variant | HUD white % | Colors | Flat-pair % | Note |
+|---|---|---|---|---|
+| DxWnd HAL base | 24.5 | ~3 in HUD | 51.7 | broken |
+| DxWnd FORCESHEL (SW) | 0.6 | 558 | 77.8 | fixed but pixelated |
+| DxWnd FORCESHEL+bilinear | 0.5 | 19,839 | 22.4 | fixed, SW quality |
+| dgVoodoo2 | — | — | — | crashes at level load |
+| **DDrawCompat direct** | **0.0** | **2,962** | **56.8** | **hardware quality** |
+
+DDrawCompat also emulates the display-mode path itself, which fixed the old
+"direct launch dies in ~8 s" failure — no window manager is needed anymore.
+
+### 5.4 Final config (reproducible)
+
+- `ddraw.dll` = DDrawCompat v0.7.1 (SHA256-verified by `Install-DDrawCompat.ps1`)
+  in `C:\GAMES\HEDZ\`. Nothing else hooks the game. mss32 proxy (music fix)
+  unchanged. DxWnd/pal-ddraw/dgVoodoo2 retired; DxWnd profile kept in
+  `tools\dxwnd\HEDZ.dxw` for the record.
+- Launch: `tools\Run-Hedz.cmd` (verifies layer + CD, starts Hedz.exe directly).
+- Evidence harness: `tools\Test-DDrawCompat.ps1` (level-entry detection via the
+  mss32 proxy `.AMB` marker, real-window-rect capture, HUD-white and
+  flat-pair measurement); captures in `tools\_loadout-ab\`.
+
+### 5.5 Honest caveats
+
+- The measurements were taken in attract/demo mode; the user confirmed the
+  fix visually in normal play ("the game looked perfect that way").
+- DDrawCompat v0.7.1 is newer than the v0.5.3 used in the community thread;
+  the A4R4G4B4 behaviour `huh` needed is the library default here.
+- DxWnd remains the fallback if a future DDrawCompat release regresses this
+  title (re-deploy with `Install-DxWnd.ps1`; use the FORCESHEL+bilinear
+  profile bits documented in §5.2 step 3).
+
+---
+
 ## 2. Open issues / known limitations
 
-1. **pal-ddraw project availability**: the wrapper DLL itself must be built or
-   downloaded from its official source (see README Tool inventory). If the
-   project is abandoned, DDrawCompat or dgVoodoo2 both implement palette
-   emulation; the shipped `ddraw.ini` documents which keys to carry over.
+1. **DirectDraw layer is DDrawCompat v0.7.1** (`tools\ddrawcompat\dist\ddraw.dll`,
+   deployed by `Install-DDrawCompat.ps1`). If a future DDrawCompat release
+   regresses HEDZ, pin the version; DxWnd 2.06.15 (FORCESHEL+BILINEARFILTER
+   profile bits, §5.2) is the documented software-rendering fallback.
 2. **TruePlay cutscenes** remain outside the engine unless someone builds a
    modern replacement decoder DLL. AVIs play fine externally.
 3. **Windows updates may re-enable** `Disable8BitAnd16BitDisplayModeToggle`
@@ -302,7 +389,8 @@ SHIM  mmioOpenA("D:\Hedz\Music\1.MUS", flags=0x10) -> MMIO_DENYNONE (flags=0x40)
 2. `C:\GAMES\HEDZ\` contains Hedz.exe, hedz.hdz, MapFiles\, Movies\, MSS32.DLL, MSS16.DLL, TruePlay.dll — **no `Music\` folder** (by design).
 3. `InstalledFromDrive` reads `D:` (32-bit registry view) and the image is mounted on that same letter.
 4. `Apply-HedzCompat.ps1 -Action Apply` ran clean; `REG QUERY` shows the POLY14 + Layers values.
-5. `ddraw.dll` (pal-ddraw) + `ddraw.ini` present in the game folder.
-6. Game launches; menu fades animate smoothly (palette emulation working).
+5. `ddraw.dll` = DDrawCompat v0.7.1 present in the game folder
+   (`Get-HedzStatus.ps1` shows the SHA256 match; no leftover wrapper files).
+6. Game launches directly (no DxWnd); menu and in-level loadout render correctly.
 7. Starting any mission produces continuous `D:\Hedz\Music\*.mus` reads in Process Monitor (streaming works).
 8. `Get-HedzCrashLog.ps1` shows no new Event 1000/1001 entries after a full session (intro → mission → exit).

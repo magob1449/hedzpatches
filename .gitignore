@@ -3,9 +3,20 @@
 tools/dxwnd/dist/
 tools/dxwnd/runtime/
 tools/dxwnd/_dist/
+# DDrawCompat v0.7.1 from github.com/narzoul/DDrawCompat (the deployed DirectDraw layer)
+tools/ddrawcompat/
+# dgVoodoo2 v2.87 from dege.freeweb.hu (tested, retired - kept only for the record)
+tools/dgvoodoo/
 
 # --- Diagnostic / trace artifacts (ProcMon CSVs, disassemblies, logs, screenshots) ---
 tools/trace/
+# A/B test screenshots and measurement outputs (regenerable via the Test-*.ps1 harnesses)
+tools/_loadout-ab/
+# Generated probe/test profiles (derived from the canonical tools/dxwnd/HEDZ.dxw by the harnesses)
+tools/dxwnd/HEDZ-test.dxw
+tools/dxwnd/HEDZ-probe.dxw
+tools/dxwnd/HEDZ-ddc.dxw
+tools/dxwnd/PROBE.dxw
 
 # --- Build outputs (also contain mss32_real.dll / winmm_real.dll from the user's disc) ---
 tools/cdstub/build/

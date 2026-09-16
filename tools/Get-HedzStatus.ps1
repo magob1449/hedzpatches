@@ -4,12 +4,12 @@
 
 .DESCRIPTION
     Answers, without changing anything:
-      * which DirectDraw provider is in the game folder (pal-ddraw vs none)
-      * whether DxWnd is deployed and which profile is installed
-      * whether DxWnd / Hedz are running right now
+      * which DirectDraw layer is in the game folder (DDrawCompat hash check)
+      * whether the mss32 music proxy is deployed
+      * whether Hedz.exe is running right now
       * whether the registry CD path is correct
-      * whether the CD image is mounted and readable
-      * any dxwnd.log present in the game folder
+      * whether the CD image is mounted and the .mus tracks are readable
+      * latest DDrawCompat log (tail)
 
     Read-only.
 #>
@@ -19,12 +19,28 @@ $kit=$PSScriptRoot
 
 function Line([string]$s){ Write-Host $s }
 
-Line '=== game folder DirectDraw layer ==='
-foreach($f in 'DDRAW.dll','DDRAW.dll.pal-ddraw-disabled','ddraw.ini','ddraw.dll','winmm.dll','winmm_real.dll'){
-    $p=Join-Path $gameDir $f
-    if(Test-Path $p){ Line ("  {0,-32} PRESENT   {1,10:N0} bytes" -f $f,(Get-Item $p).Length) }
-    else { Line ("  {0,-32} -" -f $f) }
+Line '=== DirectDraw layer (single-layer rule) ==='
+$dd=Join-Path $gameDir 'ddraw.dll'
+$src=Join-Path $kit 'ddrawcompat\dist\ddraw.dll'
+if(Test-Path $dd){
+    $len=(Get-Item $dd).Length
+    $ok=$false
+    if(Test-Path $src){ $ok=((Get-FileHash $dd -Algorithm SHA256).Hash -eq (Get-FileHash $src -Algorithm SHA256).Hash) }
+    Line ("  ddraw.dll            PRESENT   {0,10:N0} bytes   DDrawCompat v0.7.1 hash match: {1}" -f $len,$ok)
+} else {
+    Line '  ddraw.dll            MISSING - run tools\Install-DDrawCompat.ps1'
 }
+foreach($f in 'DDrawCompat-Hedz.log','winmm.dll','winmm_real.dll','D3DImm.dll','dgVoodoo.conf','ddraw.ini'){
+    $p=Join-Path $gameDir $f
+    if(Test-Path $p){
+        if($f -in 'D3DImm.dll','dgVoodoo.conf','ddraw.ini'){ Line ("  {0,-22} PRESENT  <-- LEFTOVER, run Install-DDrawCompat to remove" -f $f) }
+        else { Line ("  {0,-22} PRESENT   {1,10:N0} bytes" -f $f,(Get-Item $p).Length) }
+    }
+}
+$mss=Join-Path $gameDir 'MSS32.DLL'
+$mr=Join-Path $gameDir 'mss32_real.dll'
+if((Test-Path $mss) -and (Test-Path $mr)){ Line '  mss32 music proxy    PRESENT (streams .mus from the CD)' }
+else { Line '  mss32 music proxy    MISSING' }
 
 Line ''
 Line '=== processes ==='
@@ -33,43 +49,15 @@ foreach($n in 'Hedz','dxwnd'){
     if($ps){ $ps | ForEach-Object { Line ("  {0,-8} pid {1,-8} started {2:HH:mm:ss}" -f $_.ProcessName,$_.Id,$_.StartTime) } }
     else { Line ("  {0,-8} not running" -f $n) }
 }
+$dx=Get-Process -Name dxwnd -ErrorAction SilentlyContinue
+if($dx){ Line '  NOTE: DxWnd is running - stop it (one-wrapper rule): the game no longer uses DxWnd' }
 
 Line ''
-Line '=== DxWnd deployment ==='
-$rt=Join-Path $kit 'dxwnd\runtime'
-Line ("  runtime dir        : {0}  ({1})" -f $rt, $(if(Test-Path $rt){'present'}else{'MISSING'}))
-$prof=Join-Path $kit 'dxwnd\HEDZ.dxw'
-Line ("  profile            : {0}  ({1})" -f $prof, $(if(Test-Path $prof){'present'}else{'MISSING'}))
-if(Test-Path $prof){
-    $t=Get-Content $prof -Raw
-    foreach($k in 'title0','path0','renderer0','maxddinterface0','sizx0','sizy0','flag0','flagj0','flagn0','notes0'){
-        $m=[regex]::Match($t,('(?m)^{0}=(.*)$' -f $k))
-        if($m.Success){ Line ("    {0,-16} {1}" -f $k,$m.Groups[1].Value.Trim()) }
-    }
-    $v=[regex]::Match($t,'(?m)^version=(.*)$')
-    if($v.Success){ Line ("    {0,-16} {1}" -f 'stamp version',$v.Groups[1].Value.Trim()) }
-}
-$ini=Join-Path $rt 'dxwnd.ini'
-if(Test-Path $ini){ Line '  dxwnd.ini:'; Get-Content $ini | ForEach-Object { Line ("    " + $_) } }
-
-Line ''
-Line '=== DxWnd log files ==='
-$found=$false
-foreach($d in $gameDir,$rt,$env:TEMP){
-    if($d -and (Test-Path $d)){
-        Get-ChildItem $d -Filter 'dxwnd*.log' -ErrorAction SilentlyContinue | ForEach-Object {
-            Line ("  {0}  {1:N0} bytes  {2:HH:mm:ss}" -f $_.FullName,$_.Length,$_.LastWriteTime); $script:found=$true
-        }
-    }
-}
-if(-not $found){ Line '  (no dxwnd log present)' }
-
-Line ''
-Line '=== registry CD path (32-bit view) ==='
+Line '=== registry (32-bit view) ==='
 $k='HKLM:\SOFTWARE\WOW6432Node\Vis Interactive\Hedz'
 if(Test-Path $k){
     $p=Get-ItemProperty $k
-    foreach($n in 'InstalledFromDrive','Language','InstallType','FullScreen','ResMode','MusicLevel','SoundLevel'){
+    foreach($n in 'InstalledFromDrive','ExecutableLocation','Language','InstallType','FullScreen','ResMode','MusicLevel','SoundLevel'){
         $v=$p.PSObject.Properties | Where-Object { $_.Name -eq $n }
         if($v){ Line ("  {0,-20} {1}" -f $n,$v.Value) }
     }
@@ -78,7 +66,7 @@ if(Test-Path $k){
 Line ''
 Line '=== CD / music ==='
 $drv=$null
-if((Test-Path $k)){
+if(Test-Path $k){
     $v=(Get-ItemProperty $k -Name InstalledFromDrive -ErrorAction SilentlyContinue).InstalledFromDrive
     if($v){ $drv=$v.ToString().TrimEnd('\') }
 }
@@ -88,5 +76,12 @@ if($drv){
         $m=Get-ChildItem ($drv + '\Hedz\Music') -Filter '*.mus' -ErrorAction SilentlyContinue
         Line ("  music tracks found : {0}" -f @($m).Count)
         $m | Select-Object -First 8 | ForEach-Object { Line ("    {0,-12} {1,12:N0}" -f $_.Name,$_.Length) }
-    } else { Line ("  {0}\Hedz\Music not reachable" -f $drv) }
+    } else { Line ("  {0}\Hedz\Music not reachable - mount the CD image on {0}" -f $drv) }
 } else { Line '  could not determine the CD drive from the registry' }
+
+Line ''
+Line '=== DDrawCompat log (tail) ==='
+$lc=Join-Path $gameDir 'DDrawCompat-Hedz.log'
+if(Test-Path $lc){
+    Get-Content $lc -Tail 6 | ForEach-Object { Line ("  " + $_) }
+} else { Line '  (no DDrawCompat log yet - it appears after the first game run)' }
