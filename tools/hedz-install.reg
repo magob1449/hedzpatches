@@ -1,0 +1,58 @@
+Windows Registry Editor Version 5.00
+
+; =====================================================================
+; H.E.D.Z. - registry reference (CORRECTED)
+; ---------------------------------------------------------------------
+; WHY THIS FILE LOOKS THE WAY IT DOES
+;
+;   * Hedz.exe is a 32-BIT program, so it reads the 32-BIT registry view:
+;         HKLM\SOFTWARE\WOW6432Node\Vis Interactive\Hedz
+;     A .reg file imported with a 64-bit reg.exe writes the 64-bit view
+;     (HKLM\SOFTWARE\Vis Interactive\Hedz) where the game never looks.
+;     That mistake produced a permanent "insert the CD" prompt.
+;     For this reason the key path below is written EXPLICITLY as
+;     WOW6432Node. Alternative:  reg.exe import /reg:32 hedz-install.reg
+;
+;   * The value names are the ones the ORIGINAL installer script writes.
+;     Evidence: D:\ENGLISH\SETUP.INS contains
+;         Software\Vis Interactive\Hedz
+;         Language
+;         InstalledFromDrive
+;         InstallType
+;
+;   * InstalledFromDrive MUST INCLUDE THE COLON -- store "D:", never "D".
+;     Hedz.exe concatenates the value verbatim:
+;         RegQueryValueExA(...,"InstalledFromDrive",...)
+;         strcpy(base, value); strcat(base, "\\Hedz\\");
+;         driveLetter = base[0];
+;     No colon is inserted anywhere. A bare "D" therefore builds the RELATIVE
+;     path "D\Hedz\...", which resolves against the game's own folder instead
+;     of the CD. A Process Monitor trace of the real game showed exactly that:
+;         CreateFile C:\Games\HEDZ\D\Hedz\test        -> PATH NOT FOUND
+;         CreateFile C:\Games\HEDZ\D\Hedz\Music\1.MUS -> PATH NOT FOUND
+;     With "D:" the same trace shows D:\Hedz\test -> ACCESS DENIED (correct,
+;     the CD is write-protected) and D:\Hedz\Music\1.mus..7.mus -> SUCCESS.
+;
+;   * Without InstalledFromDrive the game reports
+;     "Registry Entry Not found, full protection" and demands the CD.
+;
+; Prefer tools\Set-HedzCdPath.ps1 (writes both views, validates the disc).
+; =====================================================================
+
+; ---- the values the game reads (32-bit view) ----
+[HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Vis Interactive\Hedz]
+"InstalledFromDrive"="D:"
+"Language"="English"
+; "InstallType"="..."      ; only if the CD prompt persists; value unknown,
+;                          ; try 1 / Full - see README Task 2
+
+; ---- uninstall bookkeeping (32-bit view, so 32-bit Add/Remove sees it) ----
+[HKEY_LOCAL_MACHINE\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\{5BAA97BC-718C-11D2-84B1-006097616E32}]
+"DisplayName"="HEDZ"
+"InstallLocation"="C:\\GAMES\\HEDZ"
+"DisplayVersion"="1.0"
+"Publisher"="VIS Interactive / Hasbro Interactive"
+
+; NOTE: there is deliberately no UNINST.EXE entry - the CD's installer
+; generates that file at install time and a manual install does not have it.
+; Uninstalling = delete the game folder and the two keys above.

@@ -1,0 +1,15 @@
+# --- Third-party tool distributions: download yourself (see README "External tools") ---
+# DxWnd 2.06.15 from sourceforge.net/projects/dxwnd, extracted here by Install-DxWnd.ps1
+tools/dxwnd/dist/
+tools/dxwnd/runtime/
+tools/dxwnd/_dist/
+
+# --- Diagnostic / trace artifacts (ProcMon CSVs, disassemblies, logs, screenshots) ---
+tools/trace/
+
+# --- Build outputs (also contain mss32_real.dll / winmm_real.dll from the user's disc) ---
+tools/cdstub/build/
+tools/msslog/build/
+
+# --- Local runtime logs ---
+*.log
